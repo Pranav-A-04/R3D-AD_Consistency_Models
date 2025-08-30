@@ -32,7 +32,7 @@ Where:
 
 ## 🔧 Architecture Overview
 
-![Architecture Diagram](/result_images/arch_diagram.jpg)
+![Architecture Diagram](/result_images/arch_diag.png)
 
 - **Input**: 3D point cloud with surface anomalies synthesized using Patch-Gen
 - **Encoder**: PointNet/PointNet++ backbone to encode into latent space  
