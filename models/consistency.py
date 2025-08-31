@@ -4,6 +4,8 @@ from torch.nn import Module
 import numpy as np
 import copy
 import math
+# from evaluation.evaluation_metrics import ChamferDistance
+from utils.misc import MILLION
 from .common import *
 
 
@@ -23,9 +25,10 @@ class ConsistencyPoint(Module):
         # Official adaptive scheduling parameters (from consistency training paper)
         self.training_step = 1
         self.s0 = 2.0                    # Initial discretization steps
-        self.s1 = 151.0                  # Target discretization steps at end of training
+        self.s1 = 1025.0  # Target discretization steps at end of training
         self.mu0 = 0.95                  # EMA decay rate at beginning of model training
-        self.K = 800000                  # Total number of training iterations (default, will be updated)
+        self.K = 1000000                  # Total number of training iterations (default, will be updated)
+        # self.chamfer = ChamferDistance()
 
     def set_total_training_steps(self, total_steps):
         """Set total training steps K for adaptive scheduling"""
@@ -92,12 +95,11 @@ class ConsistencyPoint(Module):
         
         # Always get network prediction to maintain gradient flow
         c_skip,c_out,c_in=self.get_scalings(sigma)
-        # print("c_skip: ",c_skip.shape," c_out: ",c_out.shape," c_in: ",c_in.shape)
-        # print("context dim: ",context.shape)
+
         rescaled_t = 1000 * 0.25 * torch.log(sigma + 1e-44)
         f_theta = network(c_in[:, None, None]*x, beta=rescaled_t, context=context)
-        # output = torch.where(sigma[0] == 0.002, x_raw, f_theta)
-        output=c_skip[:, None, None]*x_raw+c_out[:, None, None]*f_theta
+
+        output = c_skip[:, None, None] * x + c_out[:, None, None] * f_theta
         return output
 
     def update_target_network(self, ema_rate=None):
@@ -113,13 +115,6 @@ class ConsistencyPoint(Module):
         """Increment training step counter for adaptive scheduling"""
         self.training_step += 1
         
-    # def _karras_schedule(self, N, eps, T, rho):
-    #     """Generate Karras schedule using the boundary function"""
-    #     return torch.tensor([
-    #         (T ** (1 / rho) + (i)/ (N - 1) * 
-    #             (eps ** (1 / rho) - T ** (1 / rho))) ** rho
-    #         for i in range(N)
-    #     ], dtype=torch.float32)
     def append_dims(self,x, target_dims):
         """Appends dimensions to the end of a tensor until it has target_dims dimensions."""
         dims_to_append = target_dims - x.ndim
@@ -140,22 +135,7 @@ class ConsistencyPoint(Module):
         # Get adaptive number of steps for this training iteration
         N_k = self.get_adaptive_num_steps()
         
-        # Generate Karras sigmas for current adaptive steps
-        # karras_boundaries = self._karras_schedule(N_k, 0.002, 80, 7)
-        
-        # if t is None:
-        #     # Sample timesteps from adaptive range [1, N_k-1] inclusive
-        #     t_indices = torch.randint(0, N_k-1, (batch_size,))
-        # else:
-        #     # Ensure provided t is within adaptive range
-        #     t_indices = torch.clamp(torch.tensor(t), 0, N_k-1)
-            
-        # # Get sigma values from Karras schedule
-        # sigma_t = karras_boundaries[t_indices].to(x_0.device)
-        
-        # # For t-1, handle boundary case
-        # prev_timestep_indices = t_indices + 1
-        # sigma_t_minus_1 = karras_boundaries[prev_timestep_indices].to(x_0.device)
+        # Sample random indices for the batch
         indices = torch.randint(
             0, N_k - 1, (batch_size,), device=x_0.device
         )
@@ -168,57 +148,30 @@ class ConsistencyPoint(Module):
             sigma_min ** (1 / rho) - sigma_max ** (1 / rho)
         )
         t2 = t2**rho
-        # print("Indices: ",indices," Steps: ",N_k)
         # Add noise to clean data using Karras sigmas
         noise = torch.randn_like(x_0)
-        # print("x_0 ndim: ",x_0.ndim)
         x_t = x_0 + noise * self.append_dims(t, x_0.ndim)
-        # print("x_t shape: ",x_t.shape)
+
         d = (x_t - x_0) / self.append_dims(t, x_0.ndim)
         x_t2 = x_t + d * self.append_dims(t2 - t, x_0.ndim)
         x_t2 = x_t2.detach()        
-        # print("x_t2 shape: ",x_t2.shape)
-        # print("Timestep for online network is: ",t)
-        # print("Timestep for target network is: ",t2)
         # Consistency loss: F_θ(x_t, σ_t) should equal F_θ⁻(x_{t-1}, σ_{t-1})
         # Target from EMA network (no gradients)
         with torch.no_grad():
             target = self.consistency_function(x_t2, t2, context, use_target=True, x_raw=x_raw)
         # Prediction from main network (with gradients)
         prediction = self.consistency_function(x_t, t, context, use_target=False, x_raw=x_raw)
-        # print("Prediction shape: ",prediction.shape)
-        # print("Target shape: ",target.shape)
         snrs= t ** -2
         weightings = snrs + 1.0 / (0.5**2)
-        # loss = F.mse_loss(prediction, target, reduction="mean")
+
         diffs = (target - prediction) ** 2
-        # print("Diffs shape: ",diffs.shape)
-        # print("Weightings shape: ",weightings.shape)
         loss = self.mean_flat(diffs)*weightings 
+        recons_los_pred = self.mean_flat((prediction - x_raw) ** 2)
+        recons_los_target = self.mean_flat((target - x_raw) ** 2)
+        loss = loss + recons_los_pred + recons_los_target
         return loss
 
-    # def sample(self, num_points, context, point_dim=3, flexibility=0.0, ret_traj=False):
-    #     """Single-step sampling using main network"""
-    #     batch_size = context.size(0)
-        
-    #     # Start from noise with maximum sigma from Karras schedule
-    #     z = torch.randn([batch_size, num_points, point_dim]).to(context.device)*80.0
-    #     sigma_init = torch.full((batch_size,),80.0, device=context.device)
-    #     x_0 = self.consistency_function(z,sigma_init, context, use_target=False)
-    #     noise_levels=[40.0,20.0,10.0,5.0]
-    #     for t in noise_levels:
-    #         z = torch.randn([batch_size, num_points, point_dim]).to(context.device)
-    #         x_T = x_0 + math.sqrt(t**2 - 0.002**2) * z
-
-    #         sigma_t = torch.full((batch_size,), t, device=context.device)
-    #         x_0 = self.consistency_function(x_T, sigma_t, context, use_target=False)
-        
-    #     if ret_traj:
-    #         return {4000: x_T, 0: x_0}
-    #     else:
-    #         return x_0 
-
-    def sample(self, num_points, context, point_dim=3, flexibility=0.0, ret_traj=False,eps=0.002,T=80.0,rho=7.0,N = 151,ts=[0,67,150]):
+    def sample(self, num_points, context, point_dim=3, flexibility=0.0, ret_traj=False,eps=0.002,T=80.0,rho=7.0,N = 1025,ts=[0,364,1024]):
         """Standard multistep consistency sampling following Algorithm 1"""
     
         batch_size = context.size(0)
@@ -234,5 +187,6 @@ class ConsistencyPoint(Module):
             t_next =np.clip(t_next,eps,T)
             # t_next=torch.full((batch_size,),t_next, device=context.device)
             x = x0 + torch.randn_like(x) * math.sqrt(t_next**2 - eps**2)
+        
+        #x = self.consistency_function(x,eps * s_in,context, use_target=False)
         return x
-
