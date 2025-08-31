@@ -28,13 +28,13 @@ parser.add_argument('--adaptive_scheduling', type=eval, default=True,
                     help='Enable adaptive scheduling for consistency models')
 parser.add_argument('--s0', type=float, default=2.0,
                     help='Initial discretization steps for adaptive scheduling')
-parser.add_argument('--s1', type=float, default=151.0,
+parser.add_argument('--s1', type=float, default=1025.0,
                     help='Target discretization steps at end (default: num_steps)')
 parser.add_argument('--mu0', type=float, default=0.95,
                     help='EMA decay rate at beginning of model training')
 
 parser.add_argument('--latent_dim', type=int, default=256)
-parser.add_argument('--num_steps', type=int, default=151)
+parser.add_argument('--num_steps', type=int, default=1025)
 parser.add_argument('--beta_1', type=float, default=1e-4)
 parser.add_argument('--beta_T', type=float, default=0.05)
 parser.add_argument('--sched_mode', type=str, default='linear')
@@ -55,19 +55,19 @@ parser.add_argument('--rotate', type=eval, default=False, choices=[True, False])
 parser.add_argument('--rel', type=eval, default=True, choices=[True, False])
 
 # Optimizer and scheduler
-parser.add_argument('--lr', type=float, default=2e-4)
+parser.add_argument('--lr', type=float, default=1e-4)
 parser.add_argument('--weight_decay', type=float, default=0)
 parser.add_argument('--max_grad_norm', type=float, default=10)
 parser.add_argument('--end_lr', type=float, default=5e-6)
 parser.add_argument('--sched_start_epoch', type=int, default=10*THOUSAND)
-parser.add_argument('--sched_end_epoch', type=int, default=780*THOUSAND)
+parser.add_argument('--sched_end_epoch', type=int, default=990*THOUSAND)
 
 # Training
 parser.add_argument('--seed', type=int, default=2020)
 parser.add_argument('--logging', type=eval, default=True, choices=[True, False])
 parser.add_argument('--log_root', type=str, default='./logs_ae')
 parser.add_argument('--device', type=str, default='cuda:0')
-parser.add_argument('--max_iters', type=int, default=float('inf'))
+parser.add_argument('--max_iters', type=int, default=1000000)
 parser.add_argument('--val_freq', type=int, default=1000)
 parser.add_argument('--tag', type=str, default=None)
 parser.add_argument('--num_val_batches', type=int, default=-1)
